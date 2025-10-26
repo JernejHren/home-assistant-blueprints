@@ -1,0 +1,244 @@
+blueprint:
+  name: EV Load Management (House Power Based)
+  description: >
+    Dinamično polnjenje EV glede na porabo hiše in tarifni blok.
+    - Polnjenje se vklopi, ko je skupna poraba manjša od (blok_limit - buffer - 4200)
+    - Če je blok_limit = 0, polni samo z viškom sončne energije
+    - Tok se dinamično prilagaja glede na trenutno porabo (brez bufferja)
+    - Avtomatizacija se zažene, ko gre polnilnica iz Idle v aktivno stanje
+      in se ustavi, ko se vrne v Idle.
+  domain: automation
+
+  input:
+    export_sensor:
+      name: Export / House Power Sensor (W)
+      selector:
+        entity:
+          domain: sensor
+    charger_switch:
+      name: Charger switch
+      selector:
+        entity:
+          domain: switch
+    charger_current:
+      name: Charger current (A)
+      selector:
+        entity:
+          domain: number
+    charging_state:
+      name: Charger state sensor
+      selector:
+        entity:
+          domain: sensor
+    tariff_block:
+      name: Current tariff block sensor (1–5)
+      selector:
+        entity:
+          domain: sensor
+    block_limit_1:
+      name: Block 1 limit (W)
+      default: 6000
+      selector:
+        number:
+          min: 0
+          max: 25000
+          step: 100
+    block_limit_2:
+      name: Block 2 limit (W)
+      default: 6000
+      selector:
+        number:
+          min: 0
+          max: 25000
+          step: 100
+    block_limit_3:
+      name: Block 3 limit (W)
+      default: 6000
+      selector:
+        number:
+          min: 0
+          max: 25000
+          step: 100
+    block_limit_4:
+      name: Block 4 limit (W)
+      default: 6000
+      selector:
+        number:
+          min: 0
+          max: 25000
+          step: 100
+    block_limit_5:
+      name: Block 5 limit (W)
+      default: 6000
+      selector:
+        number:
+          min: 0
+          max: 25000
+          step: 100
+    buffer:
+      name: Start buffer (W)
+      default: 500
+      selector:
+        number:
+          min: 0
+          max: 2000
+          step: 100
+    min_current:
+      name: Minimum current (A)
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 6
+          step: 1
+    max_current:
+      name: Maximum current (A)
+      default: 16
+      selector:
+        number:
+          min: 6
+          max: 32
+          step: 1
+    debug:
+      name: Debug log
+      default: false
+      selector:
+        boolean: {}
+
+triggers:
+  - trigger: state
+    entity_id: !input charging_state
+    from: "State A - Idle"
+
+actions:
+  - variables:
+      export_sensor_entity: !input export_sensor
+      charger_switch_entity: !input charger_switch
+      charger_current_entity: !input charger_current
+      charging_state_entity: !input charging_state
+      tariff_block_entity: !input tariff_block
+      buffer: !input buffer
+      min_amp: !input min_current
+      max_amp: !input max_current
+      debug: !input debug
+
+  - repeat:
+      while:
+        - condition: template
+          value_template: "{{ not is_state(charging_state_entity, 'State A - Idle') }}"
+      sequence:
+        - variables:
+            export_raw: "{{ states(export_sensor_entity) | float(0) }}"
+            current_block: "{{ states(tariff_block_entity) | int(1) }}"
+            block_limits:
+              1: !input block_limit_1
+              2: !input block_limit_2
+              3: !input block_limit_3
+              4: !input block_limit_4
+              5: !input block_limit_5
+            block_limit: "{{ block_limits.get(current_block, 6000) | float(6000) }}"
+            current_amp: "{{ states(charger_current_entity) | float(min_amp) }}"
+            # dinamični korak glede na razliko
+            step_amp: >-
+              {% set diff = (block_limit - export_raw) / 690 %}
+              {{ [1, [diff | abs | round(0), 6] | min] | max }}
+            available_power: "{{ block_limit - export_raw }}"
+
+        # START (če še ni vklopljeno)
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: >
+                    {{ block_limit > 0 and export_raw <= (block_limit - buffer - 4200) }}
+                - condition: state
+                  entity_id: !input charger_switch
+                  state: "off"
+              sequence:
+                - action: switch.turn_on
+                  target:
+                    entity_id: !input charger_switch
+                - action: number.set_value
+                  target:
+                    entity_id: !input charger_current
+                  data:
+                    value: 6
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: "{{ debug }}"
+                      sequence:
+                        - action: system_log.write
+                          data:
+                            level: warning
+                            message: "[EV DEBUG] START → Polnjenje vklopljeno"
+
+        # PRILAGAJANJE TOKA (brez bufferja)
+        - choose:
+            - conditions:
+                - condition: state
+                  entity_id: !input charger_switch
+                  state: "on"
+              sequence:
+                - choose:
+                    # Povečaj tok
+                    - conditions:
+                        - condition: template
+                          value_template: >
+                            {{ export_raw < block_limit and current_amp < max_amp }}
+                      sequence:
+                        - action: number.set_value
+                          target:
+                            entity_id: !input charger_current
+                          data:
+                            value: "{{ [ (current_amp|int + step_amp|int), max_amp ] | min }}"
+                    # Zmanjšaj tok
+                    - conditions:
+                        - condition: template
+                          value_template: >
+                            {{ export_raw > block_limit and current_amp > min_amp }}
+                      sequence:
+                        - action: number.set_value
+                          target:
+                            entity_id: !input charger_current
+                          data:
+                            value: "{{ [ (current_amp|int - step_amp|int), min_amp ] | max }}"
+
+        # Debug logging
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: "{{ debug }}"
+              sequence:
+                - action: system_log.write
+                  data:
+                    level: warning
+                    message: >
+                      [EV DEBUG] Block={{ current_block }}, Limit={{ block_limit }}W,
+                      Export={{ export_raw }}W, Avail={{ available_power }}W,
+                      CurrAmp={{ current_amp }}A, Step={{ step_amp }}
+
+        # Počakaj 30 sekund, nato znova preveri
+        - delay:
+            seconds: 30
+
+  # Ko se stanje spremeni nazaj v Idle, izklopi vse
+  - action: switch.turn_off
+    target:
+      entity_id: !input charger_switch
+  - action: number.set_value
+    target:
+      entity_id: !input charger_current
+    data:
+      value: 0
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ debug }}"
+        sequence:
+          - action: system_log.write
+            data:
+              level: warning
+              message: "[EV DEBUG] STOP → State A - Idle, polnjenje izklopljeno"
+
+mode: restart
+
