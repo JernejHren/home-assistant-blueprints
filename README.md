@@ -41,4 +41,26 @@ ki zagotavlja podatek o trenutnem časovnem bloku (`tariff_block`).
 
 ## Namestitev
 1. Shrani YAML datoteko blueprint-a v mapo:
+2. home-assistant-blueprints/
+└── automation/
+└── EvLoadManagement/
+└── ev_load_management.yaml
+
+
+2. V Home Assistant:
+   - Settings → Blueprints → Import Blueprint → `Paste YAML or URL`  
+3. Nastavi vse vhodne parametre (senzorje, omejitve, tokove).
+
+---
+
+## Opombe
+- Blueprint je optimiziran za **3-fazno polnjenje** preko ABB Terra AC polnilnice.  
+- Presežek moči se prilagaja dinamično; večji presežek pomeni hitrejše zmanjševanje toka.  
+- Za uporabo v drugih državah ali z drugimi tarifnimi sistemi je morda potrebno prilagoditi **logiko tarifnega bloka** ali **step_amp**.
+
+---
+
+## License
+[MIT License](LICENSE)
+
 
