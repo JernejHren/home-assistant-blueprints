@@ -1,5 +1,8 @@
 # Predvidljivi Power Limiter / Predictable Power Limiter
 
+OPOZORILO še vedno v fazi razvoja !!
+WARNING still under development!!
+
 ## 🇸🇮 Slovensko
 
 ### Namen
