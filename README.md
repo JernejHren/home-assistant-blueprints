@@ -1,117 +1,136 @@
-# EV Load Management (House Power Based)
+# ⚡ EV Load Management (House Power Based)
 
-![Home Assistant](https://img.shields.io/badge/Home%20Assistant-Blueprint-blue)
+## 🇸🇮 Opis (Slovenščina)
 
-## Opis
-Ta **Home Assistant blueprint** omogoča dinamično polnjenje električnega vozila glede na porabo hiše in tarifni blok.
+Blueprint za **dinamično upravljanje polnjenja električnega vozila** glede na trenutno porabo hiše in aktivni tarifni blok.
 
-Glavne funkcionalnosti:
-- Polnjenje se vklopi, ko je skupna poraba manjša od `(blok_limit - buffer - 4200 W)`  
-  (buffer in 4200 W se upoštevata **samo pri vklopu**)  
-- Po zagonu se tok dinamično prilagaja glede na trenutno porabo **brez bufferja**  
-- Polnjenje se ustavi, ko polnilnica preide v stanje `State A - Idle`  
-- Avtomatizacija se sproži **ob prehodu iz Idle v katerokoli drugo stanje** in preverja stanje vsake 30 sekund, dokler se polnilnica ne vrne v Idle
+Ta avtomatizacija omogoča, da se polnjenje **samodejno prilagaja** glede na razpoložljivo moč, ki jo določa trenutni blok omrežne tarife (npr. blok 1–5) in trenutna hišna poraba.  
+Ko ni dovolj moči, se polnjenje ne izklopi, ampak se **tok polnjenja nastavi na 0 A**, kar omogoča, da avto ostane pripravljen brez ponovne avtorizacije.  
+Ko se sprosti moč, se polnjenje nadaljuje samodejno.
 
----
-
-## Namen in uporaba
-Blueprint je napisan za uporabo z integracijo **[ABB Terra AC Modbus Integration for Home Assistant](https://github.com/JernejHren/ABB-Terra-AC)**,  
-prilagojen je za uporabo v Sloveniji.
-
-Za pravilno delovanje priporočam uporabo skupaj z integracijo **[Home Assistant Network Tariff](https://github.com/frlequ/home-assistant-network-tariff)**,  
-ki zagotavlja podatek o trenutnem časovnem bloku (`tariff_block`).
+### 🔋 Ključne funkcije
+- ✅ Samodejno **vklopi polnjenje ob priklopu vozila**
+- ⚡ Če ni dovolj moči, **nastavi tok na 0 A** (vozilo čaka)
+- 🔁 Dinamično prilagajanje toka na podlagi porabe hiše
+- 🧠 **Buffer (histereza)** se upošteva le pri povečevanju toka — manj preklopov, bolj stabilno delovanje
+- 🕒 Upošteva **tarifne bloke** za omejevanje največje moči glede na čas dneva
+- 📴 Avtomatizacija se zaključi, ko polnilnica preide v stanje *State A - Idle*
 
 ---
 
-## Vhodni parametri (Inputs)
-| Parameter | Opis | Privzeta vrednost |
-|-----------|------|-----------------|
-| Export / House Power Sensor | Senzor skupne porabe/izvoza hiše (W) | - |
-| Charger switch | Stikalo za vklop/izklop polnjenja | - |
-| Charger current (A) | Trenutni tok polnjenja | - |
-| Charger state sensor | Stanje polnilnice (Idle/Charging/…) | - |
-| Current tariff block sensor | Trenutni tarifni blok (1–5) | - |
-| Block 1–5 limit (W) | Omejitev moči za vsak blok | 6000 W |
-| Start buffer (W) | Buffer za zagon polnjenja | 500 W |
-| Minimum current (A) | Minimalni tok polnjenja | 0 A |
-| Maximum current (A) | Maksimalni tok polnjenja | 16 A |
-| Debug log | Omogoči debug sporočila v HA log | false |
+### 🧩 Zahtevane integracije
+
+Ta blueprint je napisan za uporabo z:
+- [**ABB Terra AC Modbus Integration for Home Assistant**](https://github.com/JernejHren/ABB-Terra-AC)  
+  Integracija omogoča nadzor polnilnice ABB Terra AC (vklop/izklop, nastavitev toka, spremljanje stanja).
+
+Priporočena dodatna integracija:
+- [**Home Assistant Network Tariff Integration**](https://github.com/frlequ/home-assistant-network-tariff)  
+  Zagotavlja podatke o trenutnem **časovnem bloku** (1–5), ki jih blueprint uporablja za omejevanje moči polnjenja.
 
 ---
 
-## Namestitev
-1. Shrani YAML datoteko blueprint-a v mapo:
-2. home-assistant-blueprints/
-└── automation/
-└── EvLoadManagement/
-└── ev_load_management.yaml
+### ⚙️ Nastavitve v blueprintu
 
-
-2. V Home Assistant:
-   - Settings → Blueprints → Import Blueprint → `Paste YAML or URL`  
-3. Nastavi vse vhodne parametre (senzorje, omejitve, tokove).
-
----
-
-## Opombe
-- Blueprint je optimiziran za **3-fazno polnjenje** preko ABB Terra AC polnilnice.  
-- Presežek moči se prilagaja dinamično; večji presežek pomeni hitrejše zmanjševanje toka.  
-- Za uporabo v drugih državah ali z drugimi tarifnimi sistemi je morda potrebno prilagoditi **logiko tarifnega bloka** ali **step_amp**.
-
----
-## English 🇬🇧
-
-### Description
-This **Home Assistant blueprint** enables dynamic EV charging based on house power consumption and tariff block.
-
-Key features:
-- Charging starts when total consumption is below `(block_limit - buffer - 4200 W)`  
-  (buffer and 4200 W are **used only at startup**)  
-- After starting, charging current is dynamically adjusted based on actual consumption **without buffer**  
-- Charging stops when the charger enters `State A - Idle`  
-- Automation triggers **when leaving Idle to any other state** and checks the state every 30 seconds until the charger returns to Idle
-
-### Purpose and usage
-The blueprint is designed to work with **[ABB Terra AC Modbus Integration for Home Assistant](https://github.com/JernejHren/ABB-Terra-AC)**,  
-adapted for use in Slovenia.
-
-For proper operation, it is recommended to use together with **[Home Assistant Network Tariff](https://github.com/frlequ/home-assistant-network-tariff)**,  
-which provides the current tariff block (`tariff_block`) information.
-
-### Inputs
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| Export / House Power Sensor | Sensor of total house consumption/export (W) | - |
-| Charger switch | Switch to turn charging on/off | - |
-| Charger current (A) | Current charging amperage | - |
-| Charger state sensor | Charger state (Idle/Charging/…) | - |
-| Current tariff block sensor | Current tariff block (1–5) | - |
-| Block 1–5 limit (W) | Power limit per block | 6000 W |
-| Start buffer (W) | Startup buffer | 500 W |
-| Minimum current (A) | Minimum charging current | 0 A |
-| Maximum current (A) | Maximum charging current | 16 A |
-| Debug log | Enable debug messages in HA log | false |
-
-### Installation
-1. Save the blueprint YAML file in the folder:
-home-assistant-blueprints/
-└── automation/
-└── EvLoadManagement/
-└── ev_load_management.yaml
-
-2. In Home Assistant:
-   - Settings → Blueprints → Import Blueprint → `Paste YAML or URL`  
-3. Configure all inputs (sensors, limits, current settings).
-
-### Notes
-- Optimized for **3-phase charging** via ABB Terra AC charger.  
-- Excess power is adjusted dynamically; larger excess reduces current faster.  
-- For use in other countries or with different tariff systems, **tariff block logic** or **step_amp** may need adjustment.
+| Parameter | Opis |
+|------------|------|
+| `export_sensor` | Senzor, ki meri trenutno porabo/oddajo hiše (npr. "House Power Sensor") |
+| `charger_switch` | Stikalo za vklop/izklop polnilnice |
+| `charger_current` | Entiteta za nastavitev toka polnjenja (A) |
+| `charging_state` | Senzor stanja polnilnice (npr. "State A - Idle") |
+| `tariff_block` | Senzor trenutnega tarifnega bloka (1–5) |
+| `block_limit_1–5` | Določitev največje moči (W) za posamezen tarifni blok |
+| `buffer` | Dodatna rezerva moči (W) za histerezo pri povečevanju toka |
+| `min_current` | Najnižji tok polnjenja (A) |
+| `max_current` | Najvišji tok polnjenja (A) |
+| `debug` | Omogoča izpis dogodkov v sistemski dnevnik |
 
 ---
 
-## License
-[MIT License](LICENSE)
+### ⚡ Primer delovanja
+1. Avto se priklopi → polnilnica se **vklopi**.  
+2. Če trenutna hišna poraba presega dovoljeno mejo, se **tok nastavi na 0 A**.  
+3. Avto ostane pripravljen – ni ponovne avtorizacije.  
+4. Ko se poraba zmanjša ali blok spremeni, polnjenje **samodejno začne**.  
+5. Tok se **povečuje z bufferjem**, da se prepreči preveč pogoste spremembe.  
+6. Ko se polnilnica vrne v stanje *Idle*, se avtomatizacija ustavi in stikalo izklopi.
 
+---
 
+### 🧠 Tehnične opombe
+- Buffer se uporablja **samo pri povečevanju toka** (dodaja histerezo).  
+- Polnilnica ABB Terra AC podpira stanje “ON + 0 A” – avto ostane pripravljen brez porabe energije.  
+- Avtomatizacija uporablja interval 30 s za preverjanje pogojev.  
+- Zasnovano in testirano v Sloveniji (SLO tarifni sistem in ABB Modbus integracija).
+
+---
+
+## 🇬🇧 Description (English)
+
+Blueprint for **dynamic EV charging control** based on house power usage and active network tariff block.
+
+The automation continuously **adapts the EV charging current** according to available house power and time-of-day tariff limits.  
+If not enough power is available, the charger remains **enabled at 0 A**, keeping the EV session active and ready to resume charging automatically once conditions allow it.
+
+---
+
+### 🔋 Key Features
+- Automatically **activates charging when the EV is plugged in**
+- If insufficient power, **sets current to 0 A** (car waits)
+- Dynamically adjusts current based on total house power
+- Uses **buffer (hysteresis)** only for increasing current — avoids oscillations
+- Considers **tariff blocks (1–5)** to limit charging during high-tariff periods
+- Stops when charger returns to *State A - Idle*
+
+---
+
+### 🧩 Required Integrations
+
+Designed for use with:
+- [**ABB Terra AC Modbus Integration for Home Assistant**](https://github.com/JernejHren/ABB-Terra-AC)  
+  Enables full control of ABB Terra AC chargers via Modbus (on/off, current control, status).
+
+Recommended integration:
+- [**Home Assistant Network Tariff Integration**](https://github.com/frlequ/home-assistant-network-tariff)  
+  Provides the current **tariff block (1–5)** used to dynamically set the allowed power limit.
+
+---
+
+### ⚙️ Configuration Parameters
+
+| Parameter | Description |
+|------------|-------------|
+| `export_sensor` | Sensor measuring house power export/usage (W) |
+| `charger_switch` | Switch to enable/disable the charger |
+| `charger_current` | Number entity for setting charging current (A) |
+| `charging_state` | Sensor showing charger state (e.g., "State A - Idle") |
+| `tariff_block` | Sensor providing current tariff block (1–5) |
+| `block_limit_1–5` | Maximum allowed power (W) for each tariff block |
+| `buffer` | Power buffer (W) used as hysteresis for current increase |
+| `min_current` | Minimum charging current (A) |
+| `max_current` | Maximum charging current (A) |
+| `debug` | Enable debug logs in Home Assistant system log |
+
+---
+
+### ⚡ Operating Example
+1. EV is plugged in → charger turns **ON**.  
+2. If insufficient power is available, **current is set to 0 A**.  
+3. Car remains ready – no re-authorization required.  
+4. When power becomes available, charging **starts automatically**.  
+5. Charging current **increases gradually** with buffer-based hysteresis.  
+6. When charger returns to *Idle*, automation turns charger **OFF**.
+
+---
+
+### 🧠 Technical Notes
+- Buffer is only applied when **increasing current** (adds hysteresis).  
+- ABB Terra AC supports “ON + 0 A” safely – no battery or charger stress.  
+- Automation runs checks every 30 seconds.  
+- Optimized for the **Slovenian network tariff system** and ABB Modbus-based chargers.
+
+---
+
+## 🧾 License
+Released under the [MIT License](https://opensource.org/licenses/MIT).
 
