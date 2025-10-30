@@ -134,9 +134,4 @@ Recommended integration:
 ## 🧾 License
 Released under the [MIT License](https://opensource.org/licenses/MIT).
 
----
-
-## 🙌 Credits
-Developed and tested by the Home Assistant community for ABB Terra AC Modbus Integration users.  
-Special thanks to [Jernej Hren](https://github.com/JernejHren) for the ABB integration and [frlequ](https://github.com/frlequ) for the network tariff module.
 
