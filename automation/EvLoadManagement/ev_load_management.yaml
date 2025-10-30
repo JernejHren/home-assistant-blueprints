@@ -2,11 +2,11 @@ blueprint:
   name: EV Load Management (House Power Based)
   description: >
     Dinamično polnjenje EV glede na porabo hiše in tarifni blok.
-    - Polnjenje se vklopi, ko je skupna poraba manjša od (blok_limit - buffer - 4200)
-    - Če je blok_limit = 0, polni samo z viškom sončne energije
-    - Tok se dinamično prilagaja glede na trenutno porabo (brez bufferja)
-    - Avtomatizacija se zažene, ko gre polnilnica iz Idle v aktivno stanje
-      in se ustavi, ko se vrne v Idle.
+    - Polnjenje se vklopi ob priklopu vozila (Idle → Active)
+    - Če ni dovolj moči, se tok nastavi na 0 A (vozilo čaka)
+    - Tok se dinamično prilagaja glede na trenutno porabo
+    - Buffer se upošteva le pri povečevanju toka (histereza)
+    - Avtomatizacija se ustavi, ko polnilnica preide v stanje A - Idle
   domain: automation
 
   input:
@@ -76,7 +76,7 @@ blueprint:
           max: 25000
           step: 100
     buffer:
-      name: Start buffer (W)
+      name: Buffer for start/hysteresis (W)
       default: 500
       selector:
         number:
@@ -138,18 +138,16 @@ actions:
               5: !input block_limit_5
             block_limit: "{{ block_limits.get(current_block, 6000) | float(6000) }}"
             current_amp: "{{ states(charger_current_entity) | float(min_amp) }}"
-            # dinamični korak glede na razliko
             step_amp: >-
               {% set diff = (block_limit - export_raw) / 690 %}
               {{ [1, [diff | abs | round(0), 6] | min] | max }}
             available_power: "{{ block_limit - export_raw }}"
 
-        # START (če še ni vklopljeno)
+        ################################################################
+        # START/RESTART polnjenja (vedno ob priklopu)
+        ################################################################
         - choose:
             - conditions:
-                - condition: template
-                  value_template: >
-                    {{ block_limit > 0 and export_raw <= (block_limit - buffer - 4200) }}
                 - condition: state
                   entity_id: !input charger_switch
                   state: "off"
@@ -157,11 +155,23 @@ actions:
                 - action: switch.turn_on
                   target:
                     entity_id: !input charger_switch
-                - action: number.set_value
-                  target:
-                    entity_id: !input charger_current
-                  data:
-                    value: 6
+                - choose:
+                    - conditions:
+                        - condition: template
+                          value_template: >
+                            {{ export_raw > (block_limit - buffer - 4200) }}
+                      sequence:
+                        - action: number.set_value
+                          target:
+                            entity_id: !input charger_current
+                          data:
+                            value: 0
+                  default:
+                    - action: number.set_value
+                      target:
+                        entity_id: !input charger_current
+                      data:
+                        value: 6
                 - choose:
                     - conditions:
                         - condition: template
@@ -170,28 +180,31 @@ actions:
                         - action: system_log.write
                           data:
                             level: warning
-                            message: "[EV DEBUG] START → Polnjenje vklopljeno"
+                            message: "[EV DEBUG] START → Charger ON"
 
-        # PRILAGAJANJE TOKA (brez bufferja)
+        ################################################################
+        # PRILAGAJANJE TOKA (buffer le pri povečanju)
+        ################################################################
         - choose:
             - conditions:
                 - condition: state
                   entity_id: !input charger_switch
                   state: "on"
               sequence:
+                # Povečaj tok (z bufferjem)
                 - choose:
-                    # Povečaj tok
                     - conditions:
                         - condition: template
                           value_template: >
-                            {{ export_raw < block_limit and current_amp < max_amp }}
+                            {{ export_raw < (block_limit - buffer) and current_amp < max_amp }}
                       sequence:
                         - action: number.set_value
                           target:
                             entity_id: !input charger_current
                           data:
                             value: "{{ [ (current_amp|int + step_amp|int), max_amp ] | min }}"
-                    # Zmanjšaj tok
+                # Zmanjšaj tok (brez bufferja)
+                - choose:
                     - conditions:
                         - condition: template
                           value_template: >
@@ -203,7 +216,9 @@ actions:
                           data:
                             value: "{{ [ (current_amp|int - step_amp|int), min_amp ] | max }}"
 
-        # Debug logging
+        ################################################################
+        # DEBUG LOG
+        ################################################################
         - choose:
             - conditions:
                 - condition: template
@@ -217,11 +232,12 @@ actions:
                       Export={{ export_raw }}W, Avail={{ available_power }}W,
                       CurrAmp={{ current_amp }}A, Step={{ step_amp }}
 
-        # Počakaj 30 sekund, nato znova preveri
         - delay:
             seconds: 30
 
-  # Ko se stanje spremeni nazaj v Idle, izklopi vse
+  ################################################################
+  # STOP: State A - Idle
+  ################################################################
   - action: switch.turn_off
     target:
       entity_id: !input charger_switch
@@ -238,7 +254,6 @@ actions:
           - action: system_log.write
             data:
               level: warning
-              message: "[EV DEBUG] STOP → State A - Idle, polnjenje izklopljeno"
+              message: "[EV DEBUG] STOP → State A - Idle, charging stopped"
 
 mode: restart
-
