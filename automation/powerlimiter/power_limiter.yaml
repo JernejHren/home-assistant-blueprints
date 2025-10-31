@@ -1,11 +1,14 @@
 blueprint:
-  name: Predvidljivi Power Limiter (stabilen, z enim helperjem)
-  description: >
+  name: Predvidljivi Power Limiter (VAREN – uporabnik ima prednost)
+  description: >-
     Upravljanje naprav glede na projekcijo moči in tarifo.
-    - Izklop samo v tarifah 1 in 2 (od naprave 1 → 5)
-    - Vklop: samo naprave, ki jih je avtomatika izklopila in so bile izključene vsaj min_off_time minut
-    - Shrani stanje v en input_text helper (JSON seznam)
+    - Izklop samo v tarifah 1 in 2
+    - Vklop: SAMO naprave, ki jih je avtomatika izklopila
+    - Ročno izklopljene naprave → ostanejo izklopljene
+    - Shrani stanje v input_text helper (JSON)
     - Podpira: switch, climate, water_heater
+    - Pošlje obvestilo na do 2 napravi
+    - Stabilizacija: ne upošteva projekcije v prvih X sekundah 15-min intervala
   domain: automation
 
   input:
@@ -45,35 +48,30 @@ blueprint:
       selector:
         entity:
           domain: [switch, climate, water_heater]
-          multiple: false
     device_2_entity:
       name: 2. Naprava
       default: ""
       selector:
         entity:
           domain: [switch, climate, water_heater]
-          multiple: false
     device_3_entity:
       name: 3. Naprava
       default: ""
       selector:
         entity:
           domain: [switch, climate, water_heater]
-          multiple: false
     device_4_entity:
       name: 4. Naprava
       default: ""
       selector:
         entity:
           domain: [switch, climate, water_heater]
-          multiple: false
     device_5_entity:
       name: 5. Naprava (kritično)
       default: ""
       selector:
         entity:
           domain: [switch, climate, water_heater]
-          multiple: false
 
     projection_threshold:
       name: Prag za izklop (W nad mejo)
@@ -109,13 +107,39 @@ blueprint:
         entity:
           domain: input_text
 
+    # === OBVESTILA ===
+    notify_device_1:
+      name: Telefon 1 (neobvezno)
+      description: Vnesi ime storitve za obvestila (npr. notify.mobile_app_iphone_janez)
+      default: ""
+      selector:
+        text:
+          multiline: false
+    notify_device_2:
+      name: Telefon 2 (neobvezno)
+      description: Vnesi ime storitve za obvestila (npr. notify.mobile_app_pixel_7)
+      default: ""
+      selector:
+        text:
+          multiline: false
+
+    # === STABILIZACIJA ===
+    projection_stabilization_delay:
+      name: Stabilizacija projekcije (sekund po začetku intervala)
+      description: Ne upoštevaj projekcije v prvih X sekundah 15-min intervala
+      default: 60
+      selector:
+        number:
+          min: 0
+          max: 900
+          unit_of_measurement: sekund
+
 trigger:
   - platform: state
     entity_id: !input projected_power_sensor
   - platform: state
     entity_id: !input tariff_sensor
 
-# YAML-level mapping of inputs (no !input inside templates)
 variables:
   tariff_sensor: !input tariff_sensor
   projected_power_sensor: !input projected_power_sensor
@@ -125,6 +149,10 @@ variables:
   hysteresis: !input hysteresis
   min_off_time: !input min_off_time
   off_devices_store: !input off_devices_helper
+  notify_device_1: !input notify_device_1
+  notify_device_2: !input notify_device_2
+  projection_stabilization_delay: !input projection_stabilization_delay
+
   devices_ordered:
     - !input device_1_entity
     - !input device_2_entity
@@ -132,23 +160,22 @@ variables:
     - !input device_4_entity
     - !input device_5_entity
 
+  seconds_into_interval: >-
+    {% set interval_start = now().replace(minute=(now().minute // 15) * 15, second=0, microsecond=0) %}
+    {{ (now() - interval_start).total_seconds() | int }}
+
 action:
   - variables:
-      # current reading
       tariff_value: "{{ states(tariff_sensor) | int(0) }}"
       projected: "{{ states(projected_power_sensor) | float(0) }}"
-
-      # limit chosen by tariff
       limit: >-
         {% if tariff_value == 1 %}
           {{ tariff_1_limit }}
         {% elif tariff_value == 2 %}
           {{ tariff_2_limit }}
         {% else %}
-          999999
+          0
         {% endif %}
-
-      # build clean device list (skip empty strings)
       devices: >-
         {% set d = [] %}
         {% for e in devices_ordered %}
@@ -157,28 +184,37 @@ action:
           {% endif %}
         {% endfor %}
         {{ d }}
-
-      # read stored off-list JSON from input_text helper (list of dicts: {entity, off_since})
       stored_off: >-
-        {% set txt = states(off_devices_store) | default('[]') %}
-        {% if txt in ['', '[]', 'unknown', 'unavailable'] %}
+        {% set txt = states(off_devices_store) %}
+        {% if txt in ['', '[]', 'unknown', 'unavailable', none] %}
           []
         {% else %}
           {{ txt | from_json }}
         {% endif %}
-
       now_iso: "{{ now().isoformat() }}"
+      notifiers: >-
+        {% set n = [] %}
+        {% if notify_device_1 not in ['', 'unknown', none] %}
+          {% set n = n + [notify_device_1] %}
+        {% endif %}
+        {% if notify_device_2 not in ['', 'unknown', none] %}
+          {% set n = n + [notify_device_2] %}
+        {% endif %}
+        {{ n }}
 
-  # --- IZKLOP: samo v tarifah 1 in 2 in če projekcija preseže (limit + threshold) ---
+  # --- IZKLOP ---
   - choose:
       - conditions:
           - condition: template
             value_template: "{{ tariff_value in [1,2] }}"
           - condition: template
             value_template: "{{ projected > (limit + projection_threshold) }}"
+          - condition: template
+            value_template: "{{ seconds_into_interval >= projection_stabilization_delay }}"
         sequence:
           - variables:
-              off_list: "{{ stored_off }}"   # start from existing stored items
+              off_list: "{{ stored_off }}"
+              turned_off: []
           - repeat:
               for_each: "{{ devices }}"
               sequence:
@@ -186,12 +222,10 @@ action:
                     entity: "{{ repeat.item }}"
                     domain: "{{ entity.split('.')[0] }}"
                     state_curr: "{{ states(entity) | default('unknown') }}"
-
-                # if device is currently ON (or for climate/water_heater not 'off') and not already recorded -> turn off & append
                 - choose:
                     - conditions:
                         - condition: template
-                          value_template: >
+                          value_template: >-
                             {% if domain == 'switch' %}
                               {{ state_curr == 'on' }}
                             {% else %}
@@ -206,28 +240,45 @@ action:
                             {% else %}switch.turn_off{% endif %}
                           target:
                             entity_id: "{{ entity }}"
+                        - delay: "00:00:01"
                         - variables:
-                            off_list: >
-                              {% set added = off_list + [{'entity': entity, 'off_since': now_iso}] %}
-                              {{ added }}
-                        - delay: "00:00:02"
+                            state_after: "{{ states(entity) }}"
+                        - choose:
+                            - conditions:
+                                - condition: template
+                                  value_template: >-
+                                    {% if domain == 'switch' %}
+                                      {{ state_after == 'off' }}
+                                    {% else %}
+                                      {{ state_after in ['off', 'unknown', 'unavailable'] }}
+                                    {% endif %}
+                              sequence:
+                                - variables:
+                                    off_list: "{{ off_list + [{'entity': entity, 'off_since': now_iso}] }}"
+                                    turned_off: "{{ turned_off + [entity] }}"
+          - if:
+              - condition: template
+                value_template: "{{ turned_off | length > 0 }}"
+            then:
+              - service: input_text.set_value
+                target:
+                  entity_id: "{{ off_devices_store }}"
+                data:
+                  value: "{{ off_list | to_json }}"
+              - repeat:
+                  for_each: "{{ notifiers }}"
+                  sequence:
+                    - service: "{{ repeat.item }}"
+                      data:
+                        title: "Power Limiter — IZKLOP"
+                        message: |
+                          Izklopljene naprave:
+                          {{ turned_off | join(', ') }}
 
-          # save updated off_list as JSON into input_text helper
-          - service: input_text.set_value
-            target:
-              entity_id: "{{ off_devices_store }}"
-            data:
-              value: "{{ off_list | to_json }}"
+                          Projekcija: {{ projected | int }} W > meja {{ limit | int }} W
+                          Čas v intervalu: {{ (seconds_into_interval // 60) }}:{{ "%02d" % (seconds_into_interval % 60) }}
 
-          - service: persistent_notification.create
-            data:
-              title: "Power Limiter — izklopi"
-              message: |
-                Izklopljene naprave:
-                {{ off_list | map(attribute='entity') | list | join(', ') }}
-                Projekcija: {{ projected | int }} W > {{ limit | int }} W
-
-  # --- VKLOP: če projekcija nizka in vsaj nekateri so zapisani v helperju in so min_off_time iztekli ---
+  # --- VKLOP ---
   - choose:
       - conditions:
           - condition: template
@@ -236,7 +287,8 @@ action:
             value_template: "{{ projected < (limit - hysteresis) }}"
         sequence:
           - variables:
-              remaining: "{{ stored_off }}"   # will remove items as we successfully re-enable
+              remaining: "{{ stored_off }}"
+              turned_on: []
           - repeat:
               for_each: "{{ stored_off }}"
               sequence:
@@ -246,14 +298,17 @@ action:
                     domain: "{{ entity.split('.')[0] }}"
                     off_since_dt: "{{ as_datetime(rec.off_since) }}"
                     minutes_off: "{{ ((now() - off_since_dt).total_seconds() / 60) | float }}"
-
-                # only attempt to re-enable if min_off_time elapsed and device currently OFF
                 - choose:
                     - conditions:
                         - condition: template
                           value_template: "{{ minutes_off >= min_off_time }}"
                         - condition: template
-                          value_template: "{{ states(entity) in ['off'] }}"
+                          value_template: >-
+                            {% if domain == 'switch' %}
+                              {{ states(entity) == 'off' }}
+                            {% else %}
+                              {{ states(entity) in ['off', 'unknown', 'unavailable'] }}
+                            {% endif %}
                       sequence:
                         - service: >
                             {% if domain == 'climate' %}climate.turn_on
@@ -264,12 +319,27 @@ action:
                         - delay: "00:00:02"
                         - variables:
                             remaining: "{{ remaining | rejectattr('entity','equalto', entity) | list }}"
-          # save remaining back (those still within min_off_time)
-          - service: input_text.set_value
-            target:
-              entity_id: "{{ off_devices_store }}"
-            data:
-              value: "{{ remaining | to_json }}"
+                            turned_on: "{{ turned_on + [entity] }}"
+          - if:
+              - condition: template
+                value_template: "{{ turned_on | length > 0 }}"
+            then:
+              - service: input_text.set_value
+                target:
+                  entity_id: "{{ off_devices_store }}"
+                data:
+                  value: "{{ remaining | to_json }}"
+              - repeat:
+                  for_each: "{{ notifiers }}"
+                  sequence:
+                    - service: "{{ repeat.item }}"
+                      data:
+                        title: "Power Limiter — VKLOP"
+                        message: |
+                          Vklopljene naprave:
+                          {{ turned_on | join(', ') }}
+
+                          Projekcija: {{ projected | int }} W < meja {{ limit | int }} W
+                          Čas v intervalu: {{ (seconds_into_interval // 60) }}:{{ "%02d" % (seconds_into_interval % 60) }}
 
 mode: restart
-
