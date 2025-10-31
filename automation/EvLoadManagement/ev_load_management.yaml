@@ -1,9 +1,9 @@
 blueprint:
-  name: EV Load Management (House Power Based)
+  name: EV Load Management (Safe Start, House Power Based)
   description: >
     Dinamično polnjenje EV glede na porabo hiše in tarifni blok.
-    - Polnjenje se vklopi ob priklopu vozila (Idle → Active)
-    - Če ni dovolj moči, se tok nastavi na 0 A (vozilo čaka)
+    - Avtomatizacija se zažene ob priklopu vozila (Idle → Active)
+    - Polnilnica se vklopi ŠELE, ko je dovolj razpoložljive moči
     - Tok se dinamično prilagaja glede na trenutno porabo
     - Buffer se upošteva le pri povečevanju toka (histereza)
     - Avtomatizacija se ustavi, ko polnilnica preide v stanje A - Idle
@@ -85,7 +85,7 @@ blueprint:
           step: 100
     min_current:
       name: Minimum current (A)
-      default: 0
+      default: 6
       selector:
         number:
           min: 0
@@ -144,34 +144,26 @@ actions:
             available_power: "{{ block_limit - export_raw }}"
 
         ################################################################
-        # START/RESTART polnjenja (vedno ob priklopu)
+        # VARNA LOGIKA VKLOPA (vklop šele, ko je dovolj moči)
         ################################################################
         - choose:
             - conditions:
                 - condition: state
                   entity_id: !input charger_switch
                   state: "off"
+                - condition: template
+                  value_template: >
+                    {{ export_raw < (block_limit - buffer - 4200) }}
               sequence:
                 - action: switch.turn_on
                   target:
                     entity_id: !input charger_switch
-                - choose:
-                    - conditions:
-                        - condition: template
-                          value_template: >
-                            {{ export_raw > (block_limit - buffer - 4200) }}
-                      sequence:
-                        - action: number.set_value
-                          target:
-                            entity_id: !input charger_current
-                          data:
-                            value: 0
-                  default:
-                    - action: number.set_value
-                      target:
-                        entity_id: !input charger_current
-                      data:
-                        value: 6
+                - delay: 2
+                - action: number.set_value
+                  target:
+                    entity_id: !input charger_current
+                  data:
+                    value: "{{ min_amp }}"
                 - choose:
                     - conditions:
                         - condition: template
@@ -180,7 +172,7 @@ actions:
                         - action: system_log.write
                           data:
                             level: warning
-                            message: "[EV DEBUG] START → Charger ON"
+                            message: "[EV DEBUG] START → Charger ON (enough power)"
 
         ################################################################
         # PRILAGAJANJE TOKA (buffer le pri povečanju)
@@ -257,3 +249,4 @@ actions:
               message: "[EV DEBUG] STOP → State A - Idle, charging stopped"
 
 mode: restart
+
