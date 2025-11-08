@@ -2,12 +2,11 @@ blueprint:
   name: EV Load Management (Safe Start, House Power Based)
   description: >
     Dinamično polnjenje EV glede na porabo hiše in tarifni blok.
-    - Avtomatizacija se zažene ob priklopu vozila (Idle → Active)
-    - Polnilnica se vklopi ŠELE, ko je dovolj moči za 6A + buffer
-    - Tok se dinamično prilagaja (6A–maxA), buffer le pri povečanju
-    - Če ni dovolj moči za 6A → tok = 0A (polnjenje začasno ustavljeno)
-    - Seja ostane aktivna, polnjenje se nadaljuje ob prosti moči
-    - Avtomatizacija se ustavi ob State A - Idle
+    - Vklop šele ob 6A + buffer (realna napetost 240 V)
+    - Tok: 6A–maxA, buffer le pri povečanju
+    - Če ni moči za 6A → tok = 0A (seja ostane aktivna)
+    - Avtomatski resume, brez zanke, brez trzanja
+    - Upošteva realno napetost 240 V (namesto 230 V)
   domain: automation
 
   input:
@@ -111,10 +110,11 @@ actions:
       charging_state_entity: !input charging_state
       tariff_block_entity: !input tariff_block
       buffer: !input buffer
-      min_amp: 6  # FIKSNO 6A – ni nastavljivo
+      min_amp: 6  # FIKSNO 6A
       max_amp: !input max_current
       debug: !input debug
-      power_per_amp: 690  # 3-fazno: 230V × 3
+      line_voltage: 240  # REALNA NAPETOST
+      power_per_amp: "{{ 3 * line_voltage }}"  # 720 W/A
 
   - repeat:
       while:
@@ -132,13 +132,22 @@ actions:
               5: !input block_limit_5
             block_limit: "{{ block_limits.get(current_block, 6000) | float(6000) }}"
             current_amp: "{{ states(charger_current_entity) | float(default=min_amp) }}"
-            step_amp: >-
-              {% set diff = (block_limit - export_raw) / power_per_amp %}
-              {{ [1, [diff | abs | round(0), 6] | min] | max }}
             available_power: "{{ block_limit - export_raw }}"
+            excess_power: "{{ export_raw - block_limit }}"
+
+            # POPRAVLJEN step_amp – BREZ {{ }} znotraj {% %}
+            step_amp: >-
+              {% if available_power >= 0 %}
+                {% set diff = available_power / power_per_amp %}
+                {{ [1, [diff | abs | round(0), 6] | min] | max }}
+              {% else %}
+                {% set diff = excess_power / power_per_amp %}
+                {% set step = [1, [diff | abs | round(0), 6] | min] | max %}
+                {{ step if step > 0 else 1 }}
+              {% endif %}
 
         ################################################################
-        # VARNA LOGIKA VKLOPA – ENOTEN POGOJ Z BUFFERJEM
+        # VARNA LOGIKA VKLOPA – 6A + buffer pri 240 V
         ################################################################
         - choose:
             - conditions:
@@ -147,7 +156,7 @@ actions:
                   state: "off"
                 - condition: template
                   value_template: >
-                    {{ export_raw | float(0) < (block_limit - buffer) and (block_limit - export_raw | float(0)) >= (min_amp * 230 * 3) }}
+                    {{ export_raw | float(0) < (block_limit - buffer) and (block_limit - export_raw | float(0)) >= (min_amp * line_voltage * 3) }}
               sequence:
                 - action: switch.turn_on
                   target:
@@ -158,18 +167,14 @@ actions:
                     entity_id: !input charger_current
                   data:
                     value: "{{ min_amp }}"
-                - choose:
-                    - conditions:
-                        - condition: template
-                          value_template: "{{ debug }}"
-                      sequence:
-                        - action: system_log.write
-                          data:
-                            level: warning
-                            message: "[EV DEBUG] START → Charger ON (enough power for 6A + buffer)"
+                - if: "{{ debug }}"
+                  then:
+                    - system_log.write:
+                        level: warning
+                        message: "[EV DEBUG] START → Charger ON (6A + buffer, 240V)"
 
         ################################################################
-        # PRILAGAJANJE TOKA – POLNILNICA VEDNO VKLOPLJENA
+        # PRILAGAJANJE TOKA
         ################################################################
         - choose:
             - conditions:
@@ -178,51 +183,43 @@ actions:
                   state: "on"
               sequence:
 
-                # 1. ZMANJŠAJ na 0A, če ni dovolj moči za 6A
+                # 1. ZMANJŠAJ NA 0A – če ni dovolj za 6A pri 240 V
                 - choose:
                     - conditions:
                         - condition: template
                           value_template: >
-                            {{ export_raw > block_limit and current_amp >= min_amp }}
+                            {{ (block_limit - export_raw | float(0)) < (min_amp * line_voltage * 3) and current_amp > 0 }}
                       sequence:
                         - action: number.set_value
                           target:
                             entity_id: !input charger_current
                           data:
                             value: 0
-                        - choose:
-                            - conditions:
-                                - condition: template
-                                  value_template: "{{ debug }}"
-                              sequence:
-                                - action: system_log.write
-                                  data:
-                                    level: warning
-                                    message: "[EV DEBUG] PAUSE → Not enough power, current = 0A"
+                        - if: "{{ debug }}"
+                          then:
+                            - system_log.write:
+                                level: warning
+                                message: "[EV DEBUG] PAUSE → Not enough for 6A (240V), current = 0A"
 
-                # 2. POVZROČI na 6A, če je dovolj moči (enak pogoj kot vklop!)
+                # 2. POVZROČI NA 6A – enak pogoj kot vklop
                 - choose:
                     - conditions:
                         - condition: template
                           value_template: >
-                            {{ export_raw | float(0) < (block_limit - buffer) and (block_limit - export_raw | float(0)) >= (min_amp * 230 * 3) and current_amp == 0 }}
+                            {{ export_raw | float(0) < (block_limit - buffer) and (block_limit - export_raw | float(0)) >= (min_amp * line_voltage * 3) and current_amp == 0 }}
                       sequence:
                         - action: number.set_value
                           target:
                             entity_id: !input charger_current
                           data:
                             value: "{{ min_amp }}"
-                        - choose:
-                            - conditions:
-                                - condition: template
-                                  value_template: "{{ debug }}"
-                              sequence:
-                                - action: system_log.write
-                                  data:
-                                    level: warning
-                                    message: "[EV DEBUG] RESUME → Enough power, current = 6A"
+                        - if: "{{ debug }}"
+                          then:
+                            - system_log.write:
+                                level: warning
+                                message: "[EV DEBUG] RESUME → Enough for 6A (240V), current = 6A"
 
-                # 3. POVZROČI nad 6A (z bufferjem)
+                # 3. POVZROČI NAD 6A (z bufferjem)
                 - choose:
                     - conditions:
                         - condition: template
@@ -235,7 +232,7 @@ actions:
                           data:
                             value: "{{ [ (current_amp|int + step_amp|int), max_amp ] | min }}"
 
-                # 4. ZMANJŠAJ pod max (brez bufferja)
+                # 4. ZMANJŠAJ POD MAX (brez bufferja)
                 - choose:
                     - conditions:
                         - condition: template
@@ -251,24 +248,20 @@ actions:
         ################################################################
         # DEBUG LOG
         ################################################################
-        - choose:
-            - conditions:
-                - condition: template
-                  value_template: "{{ debug }}"
-              sequence:
-                - action: system_log.write
-                  data:
-                    level: warning
-                    message: >
-                      [EV DEBUG] Block={{ current_block }}, Limit={{ block_limit }}W,
-                      Export={{ export_raw }}W, Avail={{ available_power }}W,
-                      CurrAmp={{ current_amp }}A, Step={{ step_amp }}
+        - if: "{{ debug }}"
+          then:
+            - system_log.write:
+                level: warning
+                message: >
+                  [EV DEBUG] Block={{ current_block }}, Limit={{ block_limit }}W,
+                  Export={{ export_raw }}W, Avail={{ available_power }}W,
+                  Excess={{ excess_power }}W, CurrAmp={{ current_amp }}A, Step={{ step_amp }}
 
         - delay:
             seconds: 30
 
   ################################################################
-  # KONEC SEJE: State A - Idle → izklop
+  # KONEC SEJE
   ################################################################
   - action: switch.turn_off
     target:
@@ -278,14 +271,10 @@ actions:
       entity_id: !input charger_current
     data:
       value: 0
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ debug }}"
-        sequence:
-          - action: system_log.write
-            data:
-              level: warning
-              message: "[EV DEBUG] STOP → State A - Idle, charging stopped"
+  - if: "{{ debug }}"
+    then:
+      - system_log.write:
+          level: warning
+          message: "[EV DEBUG] STOP → State A - Idle, charging stopped"
 
 mode: restart
