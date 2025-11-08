@@ -40,7 +40,7 @@ Priporočena dodatna integracija:
 | `tariff_block` | Senzor trenutnega tarifnega bloka (1–5) |
 | `block_limit_1–5` | Največja dovoljena moč (W) za posamezen tarifni blok |
 | `buffer` | Dodatna rezerva moči (W) za histerezo pri povečevanju toka |
-| `min_current` | Najnižji tok polnjenja (A) |
+| `min_current` | Najnižji tok polnjenja (A) za pravilno delovanje MORA biti trenutno nastavljen na 0A!!! |
 | `max_current` | Najvišji tok polnjenja (A) |
 | `debug` | Omogoča izpis dogodkov v sistemski dnevnik |
 
@@ -101,7 +101,7 @@ Instead of immediately starting charging when the EV is plugged in, the automati
 | `tariff_block` | Sensor providing current tariff block (1–5) |
 | `block_limit_1–5` | Max power limit (W) per tariff block |
 | `buffer` | Power buffer (W) for hysteresis when increasing current |
-| `min_current` | Minimum charging current (A) |
+| `min_current` | Minimum charging current (A) - for blueprint to work as supposed this value MUST be set to 0A !!! |
 | `max_current` | Maximum charging current (A) |
 | `debug` | Enable debug messages in system log |
 
