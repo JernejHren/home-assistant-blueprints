@@ -4,98 +4,99 @@
 
 Blueprint za **dinamično upravljanje polnjenja električnega vozila** glede na trenutno porabo hiše in aktivni tarifni blok.
 
-Ta izboljšana različica (“Safe Start”) omogoča **varnejše delovanje** polnilnice in preprečuje napake, ki se lahko pojavijo pri **ABB Terra AC** in podobnih polnilnicah, če se polnjenje zažene z nastavitvijo toka 0 A.  
-Namesto tega se avtomatizacija zažene ob priklopu vozila, vendar **počaka z začetkom polnjenja**, dokler ni na voljo dovolj energije za *dejansko polnjenje (6 A + buffer)*.
+Ta različica (“Safe Start”) omogoča **varno in stabilno delovanje** polnilnice — še posebej pri modelih, kot je **ABB Terra AC**, kjer lahko zagon z 0 A povzroči napako.  
+Avtomatizacija polnjenje zažene ali nadaljuje **šele, ko je na voljo dovolj moči za najmanj 6 A + buffer**, s čimer prepreči napake in neželeno ciklanje.
 
 ---
 
 ### 🔋 Ključne funkcije
 
-- ✅ Avtomatizacija se **zažene ob priklopu vozila**, vendar polnilnice **ne vklopi takoj**  
-- ⚡ Polnilnica se **vklopi šele, ko je na voljo dovolj razpoložljive moči** za 6 A + buffer  
-- 🔁 Tok se **dinamično prilagaja** (6–max A) glede na trenutno porabo hiše  
-- 🧠 **Buffer (histereza)** se upošteva le pri povečevanju toka — manj preklopov, bolj stabilno delovanje  
-- 🕒 Upošteva **tarifne bloke** (1–5) za omejevanje največje moči glede na čas dneva  
-- 📴 Avtomatizacija se **zaključi**, ko polnilnica preide v stanje *State A – Idle*  
+- ⚙️ **Samodejni zagon ob priklopu vozila** (Idle → Active)
+- ⚡ Polnilnica se **vklopi šele, ko je dovolj moči za 6 A + buffer**
+- 🔁 Tok se **dinamično prilagaja** glede na trenutno porabo hiše
+- 🧠 **Buffer (histereza)** se upošteva le pri povečevanju toka
+- 🕒 Upošteva **tarifne bloke (1–5)** za omejevanje največje moči
+- 📴 Če ni dovolj moči za 6 A, se tok začasno zniža na 0 A (seja ostane aktivna)
+- 🔄 Ob ponovni prosti moči se polnjenje **samodejno nadaljuje pri 6 A**
+- 🧩 Združljivo z večino **3-faznih polnilnic (Modbus, OCPP, ABB Terra AC …)**
 
 ---
 
 ### 🧩 Zahtevane integracije
 
-Ta blueprint je namenjen uporabi z:
-- [**ABB Terra AC Modbus Integration for Home Assistant**](https://github.com/JernejHren/ABB-Terra-AC)  
-  Omogoča nadzor polnilnice ABB Terra AC (vklop/izklop, nastavitev toka, spremljanje stanja).
+Za pravilno delovanje potrebuješ:
 
-Priporočena dodatna integracija:
+- [**ABB Terra AC Modbus Integration**](https://github.com/JernejHren/ABB-Terra-AC)  
+  Omogoča nadzor polnilnice (vklop, izklop, nastavitev toka, spremljanje stanja).
+
+Priporočeno (opcijsko):
 - [**Home Assistant Network Tariff Integration**](https://github.com/frlequ/home-assistant-network-tariff)  
-  Zagotavlja podatke o trenutnem **časovnem bloku** (1–5), ki jih blueprint uporablja za dinamične omejitve moči.
+  Zagotavlja podatke o trenutnem tarifnem bloku (1–5), ki jih blueprint uporablja za omejevanje moči.
 
 ---
 
-### ⚙️ Nastavitve v blueprintu
+### ⚙️ Nastavitve blueprinta
 
 | Parameter | Opis |
 |------------|------|
 | `export_sensor` | Senzor, ki meri trenutno porabo/oddajo hiše (W) |
 | `charger_switch` | Stikalo za vklop/izklop polnilnice |
 | `charger_current` | Entiteta za nastavitev toka polnjenja (A) |
-| `charging_state` | Senzor stanja polnilnice (npr. “State A – Idle”) |
+| `charging_state` | Senzor stanja polnilnice (npr. *State A – Idle*) |
 | `tariff_block` | Senzor trenutnega tarifnega bloka (1–5) |
-| `block_limit_1–5` | Največja dovoljena moč (W) za posamezen blok |
-| `buffer` | Rezervna moč (W), ki preprečuje nihanje toka |
-| `max_current` | Največji tok polnjenja (A) |
-| `debug` | Omogoča izpis dogodkov v sistemski dnevnik |
-
-> ℹ️ *Minimalni tok polnjenja je vgrajen v blueprint in fiksno nastavljen na 6 A (ni potrebno ročno nastavljati).*
+| `block_limit_1–5` | Največja dovoljena moč (W) za posamezen tarifni blok |
+| `buffer` | Rezerva moči (W) za histerezo pri povečevanju toka |
+| `max_current` | Najvišji tok polnjenja (A) |
+| `debug` | Če je vklopljen, beleži podrobne dogodke v sistemski dnevnik |
 
 ---
 
 ### ⚡ Primer delovanja
 
-1. Avto se priklopi → avtomatizacija se **zažene**, a polnilnica **še ne vklopi**.  
-2. Ko sistem zazna, da je na voljo dovolj moči za **6 A + buffer**, se polnilnica **vklopi** in začne polnjenje.  
-3. Tok se nato **samodejno povečuje ali zmanjšuje** glede na trenutno porabo hiše.  
-4. Če poraba preseže mejo, se tok zmanjša (lahko tudi na 0 A), vendar se polnilnica **ne izklopi**.  
-5. Ko polnilnica preide v stanje *Idle*, se avtomatizacija ustavi in polnilnica se izklopi.
+1. **Avto se priklopi** → avtomatizacija se zažene, a polnilnica **še ne vklopi**.  
+2. Ko sistem zazna dovolj moči (`export_raw < block_limit – buffer`),  
+   polnilnica se **vklopi pri 6 A**.  
+3. Tok se nato **samodejno povečuje ali zmanjšuje** glede na porabo hiše.  
+4. Če poraba preseže mejo, se tok **zmanjša na 0 A**, a seja ostane aktivna.  
+5. Ko je spet dovolj moči, polnilnica **nadaljuje pri 6 A** in prilagaja tok navzgor.  
+6. Ko polnilnica preide v stanje *Idle*, se avtomatizacija ustavi in polnilnica izklopi.
 
 ---
 
 ### 🧠 Tehnične opombe
 
-- Buffer se uporablja **samo pri povečevanju toka** – zagotavlja stabilno delovanje brez preklapljanja.  
-- Polnilnica se **ne vklopi**, dokler ni na voljo dovolj moči za realno polnjenje (6 A).  
-- Avtomatizacija preverja pogoje vsakih **30 sekund**.  
-- Preverjeno in optimizirano za **slovenski tarifni sistem** in **ABB Terra AC** (Modbus).  
-- Združljivo tudi z drugimi polnilnicami (OCPP/Modbus), ki podpirajo **nadzor toka** in **stanje**.  
+- **Minimalni tok je vedno 6 A**, kar zagotavlja stabilen zagon in nadaljevanje.  
+- **Buffer** se uporablja **le pri povečevanju toka**, da prepreči hitro ciklanje.  
+- Avtomatizacija preverja pogoje vsakih 30 s (nastavljeno v `delay`).  
+- Uporablja 3-fazni izračun: `690 W / A (≈ 230 V × 3)`.  
+- Preizkušeno z **ABB Terra AC**, **SolarEdge**, **Fronius**, **Easee** in podobnimi polnilnicami.  
+- Zasnovano in testirano v Sloveniji (SLO tarifni sistem + Modbus integracija).
 
 ---
 
 ## 🇬🇧 Description (English)
 
-Blueprint for **safe and dynamic EV charging control** based on real-time house power usage and active tariff block.
+Blueprint for **safe, dynamic EV charging control** based on house power usage and active tariff block.
 
-The “Safe Start” version improves compatibility with **ABB Terra AC** and similar chargers that may enter a fault state if charging starts at 0 A.  
-Instead of immediately starting charging when the EV is plugged in, the automation **waits until sufficient power (6 A + buffer)** is available before turning the charger on.
-
----
+This “Safe Start” version ensures that charging starts only when there’s enough power for **6 A + buffer**, preventing charger errors and avoiding cycling behavior common with ABB Terra AC and similar stations.
 
 ### 🔋 Key Features
-
-- Starts automatically when EV is plugged in, but **delays charging start**  
-- Charger turns **ON only when there’s enough power** for 6 A + buffer  
-- Charging current **dynamically adapts** (6–max A) to house consumption  
-- **Buffer (hysteresis)** only applies when increasing current — stable, smooth behavior  
-- Considers **tariff blocks (1–5)** to limit power by time of day  
-- Stops when charger returns to *State A – Idle*
+- Automation starts on plug-in (Idle → Active)
+- Charger turns **on only when power ≥ 6 A + buffer**
+- Charging current dynamically adapts to house consumption
+- **Buffer (hysteresis)** used only when increasing current
+- Supports **tariff blocks (1–5)** for power-limit scheduling
+- If not enough power → current = 0 A (temporary pause)
+- When power returns → charging resumes at 6 A
+- Tested with **ABB Terra AC** and compatible 3-phase chargers
 
 ---
 
 ### 🧩 Required Integrations
-
-- [**ABB Terra AC Modbus Integration for Home Assistant**](https://github.com/JernejHren/ABB-Terra-AC)  
-  Enables on/off control, current adjustment, and state monitoring.  
+- [**ABB Terra AC Modbus Integration**](https://github.com/JernejHren/ABB-Terra-AC)  
+  Provides full control of charger (on/off, current, state).
 - [**Home Assistant Network Tariff Integration**](https://github.com/frlequ/home-assistant-network-tariff) *(optional)*  
-  Provides current tariff block (1–5) information for power limit adjustment.
+  Supplies current tariff block (1–5) for dynamic limits.
 
 ---
 
@@ -104,36 +105,24 @@ Instead of immediately starting charging when the EV is plugged in, the automati
 | Parameter | Description |
 |------------|-------------|
 | `export_sensor` | Sensor measuring house power usage/export (W) |
-| `charger_switch` | Switch entity controlling charger power |
-| `charger_current` | Number entity setting charging current (A) |
-| `charging_state` | Sensor indicating charger state (e.g., “State A – Idle”) |
-| `tariff_block` | Sensor providing current tariff block (1–5) |
-| `block_limit_1–5` | Maximum power limit (W) per tariff block |
-| `buffer` | Power buffer (W) for hysteresis when increasing current |
-| `max_current` | Maximum charging current (A) |
-| `debug` | Enables detailed logging in Home Assistant system log |
-
-> 💡 *Minimum current (6 A) is defined internally and cannot be changed — ensures safe startup.*
-
----
-
-### ⚡ Operating Example
-
-1. EV is plugged in → automation starts, charger stays **OFF**.  
-2. When there’s enough available power for **6 A + buffer**, charger turns **ON**.  
-3. Current **adjusts automatically** to real-time house load.  
-4. If consumption rises above the limit, current decreases (possibly to 0 A), but charger remains ON.  
-5. When charger returns to *Idle*, automation stops and turns it OFF.
+| `charger_switch` | Switch controlling charger power |
+| `charger_current` | Number entity controlling charging current (A) |
+| `charging_state` | Charger state sensor (e.g. “State A – Idle”) |
+| `tariff_block` | Tariff block sensor (1–5) |
+| `block_limit_1–5` | Max allowed power (W) per tariff block |
+| `buffer` | Extra margin (W) for hysteresis on current increase |
+| `max_current` | Max charging current (A) |
+| `debug` | Enable detailed debug messages |
 
 ---
 
 ### 🧠 Technical Notes
 
-- Buffer adds **hysteresis only for current increase**, preventing flickering.  
-- Prevents *Paused/Fault* states by avoiding 0 A startup.  
-- 30-second control loop for smooth behavior.  
-- Optimized for **Slovenian grid** and **ABB Modbus chargers**.  
-- Compatible with other OCPP/Modbus chargers supporting current control and state feedback.
+- Minimum current always set to 6 A for safe start/resume  
+- Power threshold based on 3-phase × 230 V (≈ 690 W/A)  
+- Logic loops every 30 seconds  
+- Buffer applies only to current increase  
+- Stable operation tested with ABB Terra AC & SolarEdge
 
 ---
 
