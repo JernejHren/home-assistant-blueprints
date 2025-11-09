@@ -2,10 +2,10 @@ blueprint:
   name: EV Load Management (Safe Start, House Power Based)
   description: >
     Dinamično polnjenje EV glede na porabo hiše in tarifni blok.
-    - Avtomatizacija se zažene ob priklopu vozila (Idle → Active)
+    - Avtomatizacija se zažene ob priklopu vozila (Idle to Active)
     - Polnilnica se vklopi ŠELE, ko je dovolj moči za 6A + buffer
     - Tok se dinamično prilagaja (6A–maxA), buffer le pri povečanju
-    - Če ni dovolj moči za 6A → tok = 0A (polnjenje začasno ustavljeno)
+    - Če ni dovolj moči za 6A to tok = 0A (polnjenje začasno ustavljeno)
     - Seja ostane aktivna, polnjenje se nadaljuje ob prosti moči
     - Avtomatizacija se ustavi ob State A - Idle
   domain: automation
@@ -166,7 +166,7 @@ actions:
                         - action: system_log.write
                           data:
                             level: warning
-                            message: "[EV DEBUG] START → Charger ON (enough power for 6A + buffer)"
+                            message: "[EV DEBUG] START to Charger ON (enough power for 6A + buffer)"
 
         ################################################################
         # PRILAGAJANJE TOKA – POLNILNICA VEDNO VKLOPLJENA
@@ -198,9 +198,9 @@ actions:
                                 - action: system_log.write
                                   data:
                                     level: warning
-                                    message: "[EV DEBUG] PAUSE → Not enough power, current = 0A"
+                                    message: "[EV DEBUG] PAUSE to Not enough power, current = 0A"
 
-                # 2. POVZROČI na 6A, če je dovolj moči (enak pogoj kot vklop!)
+                # 2. POVZROČI na 6A – z bufferjem, enako kot vklop in povečevanje
                 - choose:
                     - conditions:
                         - condition: template
@@ -220,7 +220,7 @@ actions:
                                 - action: system_log.write
                                   data:
                                     level: warning
-                                    message: "[EV DEBUG] RESUME → Enough power, current = 6A"
+                                    message: "[EV DEBUG] RESUME to Enough power, current = 6A"
 
                 # 3. POVZROČI nad 6A (z bufferjem)
                 - choose:
@@ -268,7 +268,7 @@ actions:
             seconds: 30
 
   ################################################################
-  # KONEC SEJE: State A - Idle → izklop
+  # KONEC SEJE: State A - Idle to izklop
   ################################################################
   - action: switch.turn_off
     target:
@@ -286,6 +286,6 @@ actions:
           - action: system_log.write
             data:
               level: warning
-              message: "[EV DEBUG] STOP → State A - Idle, charging stopped"
+              message: "[EV DEBUG] STOP to State A - Idle, charging stopped"
 
 mode: restart
